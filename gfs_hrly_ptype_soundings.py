@@ -67,17 +67,16 @@ else:
 mdate = str(year) + str(month) + str(day)
 
 
-def get_init_hr(fhour):
+def get_init_hr(fhour, hh=None):
     if int(fhour) < 6:
         hh = '00'
     elif int(fhour) < 12:
         hh = '06'
-    elif int(fhour) < 17:
+    elif int(fhour) < 18:
         hh = '12'
-    elif int(fhour) < 23:
+    elif int(fhour) < 24:
         hh = '18'
-    else:
-        hh = '00'
+    assert hh is not None
     return hh
 
 
@@ -94,6 +93,20 @@ mkdir_p(output_dir + '/GFS')  # create subdirectory to store GFS output like thi
 ds = xr.open_dataset(url)
 ds = ds.metpy.assign_crs(grid_mapping_name='latitude_longitude',
                          earth_radius=6371229.0)
+# Rename variables to useful things
+ds = ds.rename({
+    'cfrzrsfc': 'catice',
+    'cicepsfc': 'catsleet',
+    'crainsfc': 'catrain',
+    'csnowsfc': 'catsnow',
+    'tmpprs': 'temperature',
+    'prmslmsl': 'mslp',
+    'tmp2m': 'sfc_temp',
+    'dpt2m': 'sfc_td',
+    'refcclm': 'radar',
+    'rhprs': 'rh'
+})
+
 init_hr = dt.datetime(year, int(month), int(day), int(init_hour))
 times = ds['tmp2m'].metpy.time  # Pull out the time dimension
 init_time = ds['time'][0]
@@ -104,77 +117,64 @@ lons = np.arange(240, 310, 0.25)
 
 ds = ds.sel(lat=lats, lon=lons)
 
+# Pull out the categorical precip type arrays
+catrain = ds['catrain']
+catsnow = ds['catsnow']
+catsleet = ds['catsleet']
+catice = ds['catice']
+
+# This extends each ptype one gridpoint outwards to prevent a gap between
+# different ptypes
+radius = 1
+kernel = np.zeros((2 * radius + 1, 2 * radius + 1))
+y1, x1 = np.ogrid[-radius:radius + 1, -radius:radius + 1]
+mask = x1 ** 2 + y1 ** 2 <= radius ** 2
+kernel[mask] = 1
+
+# Make the ptype arrays nicer looking
+snowc = gf(catsnow, np.max, footprint=kernel)
+icec = gf(catice, np.max, footprint=kernel)
+sleetc = gf(catsleet, np.max, footprint=kernel)
+rainc = gf(catrain, np.max, footprint=kernel)
+
+# Coordinate stuff
+vertical, = ds['temperature'].metpy.coordinates('vertical')
+x, y = ds['temperature'].metpy.coordinates('x', 'y')
+lat, lon = xr.broadcast(y, x)
+zH5_crs = ds['temperature'].metpy.cartopy_crs
+
+# Processing surface temperature data
+t2m = ds['sfc_temp'].squeeze()
+t2m = ((t2m - 273.15) * (9. / 5.)) + 32.
+
+td2m = ds['sfc_td'].squeeze()
+td2m = ((td2m - 273.15) * (9. / 5.)) + 32.
+td2ms = ndimage.gaussian_filter(td2m, sigma=5, order=0)
+
+# Fetch reflectivity data
+reflectivity = ds['radar'].squeeze()
+
+# Create masked arrays for each ptype
+rain = np.ma.masked_where(rainc == 0, reflectivity)
+sleet = np.ma.masked_where(sleetc == 0, reflectivity)
+ice = np.ma.masked_where(icec == 0, reflectivity)
+snow = np.ma.masked_where(snowc == 0, reflectivity)
+
+# Process MSLP data
+mslp = ds['mslp'] / 100.
+mslpc = mslp.squeeze()
+mslpc = ndimage.gaussian_filter(mslpc, sigma=1, order=0)
+
 # Now loop through the 120 forecast hours to make the plots
 for i in range(0, 121, 24):
     # Get the data for the forecast hour of interest
     # data = ds.metpy.parse_cf()
     data = ds.isel(time=i)
 
-    # Rename variables to useful things
-    data = data.rename({
-        'cfrzrsfc': 'catice',
-        'cicepsfc': 'catsleet',
-        'crainsfc': 'catrain',
-        'csnowsfc': 'catsnow',
-        'tmpprs': 'temperature',
-        'prmslmsl': 'mslp',
-        'tmp2m': 'sfc_temp',
-        'dpt2m': 'sfc_td',
-        'refcclm': 'radar',
-        'rhprs': 'rh'
-    })
-
-    # Pull out the categorical precip type arrays
-    catrain = data['catrain'].squeeze()
-    catsnow = data['catsnow'].squeeze()
-    catsleet = data['catsleet'].squeeze()
-    catice = data['catice'].squeeze()
-
-    # This extends each ptype one gridpoint outwards to prevent a gap between
-    # different ptypes
-    radius = 1
-    kernel = np.zeros((2 * radius + 1, 2 * radius + 1))
-    y1, x1 = np.ogrid[-radius:radius + 1, -radius:radius + 1]
-    mask = x1 ** 2 + y1 ** 2 <= radius ** 2
-    kernel[mask] = 1
-
-    # Make the ptype arrays nicer looking
-    snowc = gf(catsnow, np.max, footprint=kernel)
-    icec = gf(catice, np.max, footprint=kernel)
-    sleetc = gf(catsleet, np.max, footprint=kernel)
-    rainc = gf(catrain, np.max, footprint=kernel)
-
-    # Coordinate stuff
-    vertical, = data['temperature'].metpy.coordinates('vertical')
-    time = data['temperature'].metpy.time
-    x, y = data['temperature'].metpy.coordinates('x', 'y')
-    lat, lon = xr.broadcast(y, x)
-    zH5_crs = data['temperature'].metpy.cartopy_crs
-
-    # Processing surface temperature data
-    t2m = data['sfc_temp'].squeeze()
-    t2m = ((t2m - 273.15) * (9. / 5.)) + 32.
-
-    td2m = data['sfc_td'].squeeze()
-    td2m = ((td2m - 273.15) * (9. / 5.)) + 32.
-    td2ms = ndimage.gaussian_filter(td2m, sigma=5, order=0)
-
-    # Fetch reflectivity data
-    reflectivity = data['radar'].squeeze()
-
-    # Create masked arrays for each ptype
-    rain = np.ma.masked_where(rainc == 0, reflectivity)
-    sleet = np.ma.masked_where(sleetc == 0, reflectivity)
-    ice = np.ma.masked_where(icec == 0, reflectivity)
-    snow = np.ma.masked_where(snowc == 0, reflectivity)
-
-    # Process MSLP data
-    mslp = data['mslp'] / 100.
-    mslpc = mslp.squeeze()
-    mslpc = ndimage.gaussian_filter(mslpc, sigma=1, order=0)
+    fcst_time = data['temperature'].metpy.time
 
     # This creates a nice-looking datetime label
-    dtfs = str(time.dt.strftime('%Y-%m-%d_%H%MZ').item())
+    dtfs = str(fcst_time.dt.strftime('%Y-%m-%d_%H%MZ').item())
 
     # SET UP FIGURE
     fig = plt.figure(figsize=(15, 15))
@@ -221,7 +221,7 @@ for i in range(0, 121, 24):
 
     # Set a title and extent for the map
     ax1.set_title('Precipitation Type and Selected Soundings', fontsize=16)
-    ax1.set_title('\n Valid: ' + time.dt.strftime('%Y-%m-%d %H:%MZ').item(), fontsize=11, loc='right')
+    ax1.set_title('\n Valid: ' + fcst_time.dt.strftime('%Y-%m-%d %H:%MZ').item(), fontsize=11, loc='right')
     ax1.set_title('\n GFS Init: ' + init_time.dt.strftime('%Y-%m-%d %H:%MZ').item(), fontsize=11, loc='left')
     ax1.set_extent((255, 285, 25, 50))  # , crs = zH5_crs)    # Set a title and show the plot
 
