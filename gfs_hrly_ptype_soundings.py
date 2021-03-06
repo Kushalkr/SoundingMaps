@@ -18,14 +18,14 @@ from metpy.plots import SkewT
 import matplotlib.lines as lines
 import metpy.calc as mpcalc
 
-'''
+"""
 This program produces soundings derived from GFS model data obtained via
 the NOMADS openDAP functionality and overlays these soundings above a
 map of precipitation type and MSLP to assist in the assessment of spatial
 and temporal changes in thermodynamic and moisture profiles.
 
 This code was originally written by Jack Sillin.
-'''
+"""
 
 
 # make unique directory to store output
@@ -42,13 +42,19 @@ def mkdir_p(mypath):
             pass
         else:
             raise
+<<<<<<< HEAD
 
 
 # grabbing data from NOMADS
 startTime = datetime.utcnow() - dt.timedelta(hours=12)
+=======
 
-year = startTime.year
+>>>>>>> upstream/main
 
+# grabbing data from NOMADS
+start_time = datetime.now()
+
+<<<<<<< HEAD
 if startTime.month < 10:
     month = '0' + str(startTime.month)
 else:
@@ -110,6 +116,43 @@ ds = ds.rename({
 init_hr = dt.datetime(year, int(month), int(day), int(init_hour))
 times = ds['tmp2m'].metpy.time  # Pull out the time dimension
 init_time = ds['time'][0]
+=======
+year = start_time.year
+
+month = f"{start_time:%m}"
+day = f"{start_time.day:%d}"
+hour = f"{start_time.hour:%H}"
+
+mdate = f"{start_time:%Y%m%d}"
+
+
+def get_init_hr(hour):
+    if int(hour) < 6:
+        init_hour = "00"
+    elif int(hour) < 12:
+        init_hour = "06"
+    elif int(hour) < 17:
+        init_hour = "12"
+    elif int(hour) < 22:
+        init_hour = "18"
+    else:
+        init_hour = "00"
+    return init_hour
+
+
+init_hour = get_init_hr(hour)
+url = f"http://nomads.ncep.noaa.gov:80/dods/gfs_0p25_1hr/gfs{mdate}/gfs_0p25_1hr_{init_hour}z"
+
+# Create new directory to store output
+mkdir_p(f"{year}{month}{day}_{init_hour}00")
+mkdir_p(f"{output_dir}/GFS")  # create subdirectory to store GFS output like this
+
+# This actually opens the dataset from NOMADS and parses it with MetPy
+ds = xr.open_dataset(url)
+init_hr = dt.datetime(year, month, day, init_hour)
+times = ds["tmp2m"].metpy.time  # Pull out the time dimension
+init_time = ds["time"][0]
+>>>>>>> upstream/main
 
 # Subset the data to only work with certain lats and lons of interest
 lats = np.arange(20, 55, 0.25)
@@ -117,6 +160,7 @@ lons = np.arange(240, 310, 0.25)
 
 ds = ds.sel(lat=lats, lon=lons)
 
+<<<<<<< HEAD
 # Pull out the categorical precip type arrays
 catrain = ds['catrain']
 catsnow = ds['catsnow']
@@ -177,13 +221,91 @@ for i in range(0, 121, 24):
     dtfs = str(fcst_time.dt.strftime('%Y-%m-%d_%H%MZ').item())
 
     # SET UP FIGURE
+=======
+# Now loop through the 120 forecast hours to make the plots
+for i in range(0, 120):
+    # Get the data for the forecast hour of interest
+    data = ds.metpy.parse_cf()
+    data = data.isel(time=i)
+
+    # Rename variables to useful things
+    data = data.rename(
+        {
+            "cfrzrsfc": "catice",
+            "cicepsfc": "catsleet",
+            "crainsfc": "catrain",
+            "csnowsfc": "catsnow",
+            "tmpprs": "temperature",
+            "prmslmsl": "mslp",
+            "tmp2m": "sfc_temp",
+            "dpt2m": "sfc_td",
+            "refcclm": "radar",
+            "rhprs": "rh",
+        }
+    )
+
+    # Pull out the categorical precip type arrays
+    catrain = data["catrain"].squeeze()
+    catsnow = data["catsnow"].squeeze()
+    catsleet = data["catsleet"].squeeze()
+    catice = data["catice"].squeeze()
+
+    # This extends each ptype one gridpoint outwards to prevent a gap between
+    # different ptypes
+    radius = 1
+    kernel = np.zeros((2 * radius + 1, 2 * radius + 1))
+    y1, x1 = np.ogrid[-radius : radius + 1, -radius : radius + 1]
+    mask = x1 ** 2 + y1 ** 2 <= radius ** 2
+    kernel[mask] = 1
+
+    # Make the ptype arrays nicer looking
+    snowc = gf(catsnow, np.max, footprint=kernel)
+    icec = gf(catice, np.max, footprint=kernel)
+    sleetc = gf(catsleet, np.max, footprint=kernel)
+    rainc = gf(catrain, np.max, footprint=kernel)
+
+    # Coordinate stuff
+    (vertical,) = data["temperature"].metpy.coordinates("vertical")
+    time = data["temperature"].metpy.time
+    x, y = data["temperature"].metpy.coordinates("x", "y")
+    lat, lon = xr.broadcast(y, x)
+    zH5_crs = data["temperature"].metpy.cartopy_crs
+
+    # Processing surface temperature data
+    t2m = data["sfc_temp"].squeeze()
+    t2m = ((t2m - 273.15) * (9.0 / 5.0)) + 32.0
+
+    td2m = data["sfc_td"].squeeze()
+    td2m = ((td2m - 273.15) * (9.0 / 5.0)) + 32.0
+    td2ms = ndimage.gaussian_filter(td2m, sigma=5, order=0)
+
+    # Fetch reflectivity data
+    reflectivity = data["radar"].squeeze()
+
+    # Create masked arrays for each ptype
+    rain = np.ma.masked_where(rainc == 0, reflectivity)
+    sleet = np.ma.masked_where(sleetc == 0, reflectivity)
+    ice = np.ma.masked_where(icec == 0, reflectivity)
+    snow = np.ma.masked_where(snowc == 0, reflectivity)
+
+    # Process MSLP data
+    mslp = data["mslp"] / 100.0
+    mslpc = mslp.squeeze()
+    mslpc = ndimage.gaussian_filter(mslpc, sigma=1, order=0)
+
+    # This creates a nice-looking datetime label
+    dtfs = str(time.dt.strftime("%Y-%m-%d_%H%MZ").item())
+
+    ########## SET UP FIGURE ##################################################
+>>>>>>> upstream/main
     fig = plt.figure(figsize=(15, 15))
     ax1 = fig.add_subplot(111, projection=zH5_crs)
 
-    ax1.coastlines(resolution='10m')
-    ax1.add_feature(cfeature.BORDERS.with_scale('10m'))
-    ax1.add_feature(cfeature.STATES.with_scale('10m'))
+    ax1.coastlines(resolution="10m")
+    ax1.add_feature(cfeature.BORDERS.with_scale("10m"))
+    ax1.add_feature(cfeature.STATES.with_scale("10m"))
 
+<<<<<<< HEAD
     # Plot 2m 32F isotherm
     tmp_2m32 = ax1.contour(x, y, t2m, colors='b', alpha=0.8, levels=[32])
 
@@ -199,10 +321,83 @@ for i in range(0, 121, 24):
     qs_cols = ['#b8ffff', '#82ffff', '#00ffff', '#00cccc', '#00adad', '#007575', '#0087f5', '#0039f5', '#1d00f5']
     qi_cols = ['#eeccff', '#dd99ff', '#cc66ff', '#bb33ff', '#aa00ff', '#8800cc', '#660099', '#440066', '#6600cc']
     qz_cols = ['#ff0066', '#ff0080', '#ff33cc', '#ff00bf', '#cc0099', '#990073', '#66004d', '#b30000', '#ff3333']
+=======
+    ########## PLOTTING #######################################################
+    # Plot 2m 32F isotherm
+    tmp_2m32 = ax1.contour(x, y, t2m, colors="b", alpha=0.8, levels=[32])
+
+    # Plot labeled MSLP contours
+    h_contour = ax1.contour(
+        x,
+        y,
+        mslpc,
+        colors="dimgray",
+        levels=range(940, 1080, 4),
+        linewidths=1,
+        alpha=0.7,
+    )
+    h_contour.clabel(
+        fontsize=14,
+        colors="dimgray",
+        inline=1,
+        inline_spacing=4,
+        fmt="%i mb",
+        rightside_up=True,
+        use_clabeltext=True,
+    )
+
+    # Define levels and colors for plotting precip types
+    ref_levs = [1, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65]
+    qr_cols = [
+        "#cfffbf",
+        "#a7ff8a",
+        "#85ff5c",
+        "#60ff2b",
+        "#40ff00",
+        "#ffff00",
+        "#e6e600",
+        "#cccc00",
+        "#e4cc00",
+    ]
+    qs_cols = [
+        "#b8ffff",
+        "#82ffff",
+        "#00ffff",
+        "#00cccc",
+        "#00adad",
+        "#007575",
+        "#0087f5",
+        "#0039f5",
+        "#1d00f5",
+    ]
+    qi_cols = [
+        "#eeccff",
+        "#dd99ff",
+        "#cc66ff",
+        "#bb33ff",
+        "#aa00ff",
+        "#8800cc",
+        "#660099",
+        "#440066",
+        "#6600cc",
+    ]
+    qz_cols = [
+        "#ff0066",
+        "#ff0080",
+        "#ff33cc",
+        "#ff00bf",
+        "#cc0099",
+        "#990073",
+        "#66004d",
+        "#b30000",
+        "#ff3333",
+    ]
+>>>>>>> upstream/main
 
     # Plot the underlying precip type shadings
     # Use try/except so that if no ice/sleet/etc is present, things don't break
     try:
+<<<<<<< HEAD
         ra = ax1.contourf(x, y, rain, colors=qr_cols, levels=ref_levs, alpha=0.4, extend='max')
     except TypeError:
         print('no rain')
@@ -227,6 +422,50 @@ for i in range(0, 121, 24):
 
     # SOUNDINGS
     '''
+=======
+        ra = ax1.contourf(
+            x, y, rain, colors=qr_cols, levels=ref_levs, alpha=0.4, extend="max"
+        )
+    except:
+        print("no rain")
+    try:
+        sn = ax1.contourf(
+            x, y, snow, colors=qs_cols, levels=ref_levs, alpha=0.4, extend="max"
+        )
+    except:
+        print("no snow")
+    try:
+        ip = ax1.contourf(
+            x, y, sleet, colors=qi_cols, levels=ref_levs, alpha=0.4, extend="max"
+        )
+    except:
+        print("no sleet")
+    try:
+        zr = ax1.contourf(
+            x, y, ice, colors=qz_cols, levels=ref_levs, alpha=0.4, extend="max"
+        )
+    except:
+        print("no ice")
+
+    # Set a title and extent for the map
+    ax1.set_title("Precipitation Type and Selected Soundings", fontsize=16)
+    ax1.set_title(
+        "\n Valid: " + time.dt.strftime("%Y-%m-%d %H:%MZ").item(),
+        fontsize=11,
+        loc="right",
+    )
+    ax1.set_title(
+        "\n GFS Init: " + init_time.dt.strftime("%Y-%m-%d %H:%MZ").item(),
+        fontsize=11,
+        loc="left",
+    )
+    ax1.set_extent(
+        (255, 285, 25, 50)
+    )  # , crs = zH5_crs)    # Set a title and show the plot
+
+    #################### SOUNDINGS ################################
+    """
+>>>>>>> upstream/main
     Ok this is the fun part. I admit this is probably the number one ugliest
     way of possibly doing this. So sorry for the frustration!
 
@@ -254,7 +493,7 @@ for i in range(0, 121, 24):
     skew t plots (I set mine to come from the bottom of the purple line). I've
     put in a feature request for this, so hopefully it will be easier in the
     future.
-    '''
+    """
 
     sound_pres = data.lev  # Grab pressure data for the y-axis
     ptop = 300  # set the top of the sounding at 300mb
@@ -267,6 +506,7 @@ for i in range(0, 121, 24):
     for i in range(1, 5):
         soundlat = 27.15
         soundlon = 360 - (startlat + (londelt * i))
+<<<<<<< HEAD
         sound_temps = data['temperature'].interp(lat=soundlat, lon=soundlon) - 273.15
         sound_rh = data['rh'].interp(lat=soundlat, lon=soundlon)
         sound_dp = mpcalc.dewpoint_from_relative_humidity(sound_temps.data * units.degC, sound_rh.data * units.percent)
@@ -276,10 +516,24 @@ for i in range(0, 121, 24):
         skew.ax.axvline(0, color='purple', linestyle='--', linewidth=3)
         skew.ax.set_ylim((1000, ptop))
         skew.ax.axis('off')
+=======
+        sound_temps = data["temperature"].interp(lat=soundlat, lon=soundlon) - 273.15
+        sound_rh = data["rh"].interp(lat=soundlat, lon=soundlon)
+        sound_dp = mpcalc.dewpoint_from_relative_humidity(
+            sound_temps.data * units.degC, sound_rh.data * units.percent
+        )
+        skew = SkewT(fig=fig, rect=(0.75 - (0.15 * i), 0.2, 0.15, 0.1))
+        skew.plot(sound_pres, sound_dp, "g", linewidth=3)
+        skew.plot(sound_pres, sound_temps, "r", linewidth=3)
+        skew.ax.axvline(0, color="purple", linestyle="--", linewidth=3)
+        skew.ax.set_ylim((1000, ptop))
+        skew.ax.axis("off")
+>>>>>>> upstream/main
 
     for i in range(0, 5):
         soundlat = 31
         soundlon = 360 - (startlat + (londelt * i))
+<<<<<<< HEAD
         sound_temps = data['temperature'].interp(lat=soundlat, lon=soundlon) - 273.15
         sound_rh = data['rh'].interp(lat=soundlat, lon=soundlon)
         sound_dp = mpcalc.dewpoint_from_relative_humidity(sound_temps.data * units.degC, sound_rh.data * units.percent)
@@ -289,10 +543,24 @@ for i in range(0, 121, 24):
         skew.ax.axvline(0, color='purple', linestyle='--', linewidth=3)
         skew.ax.set_ylim((1000, ptop))
         skew.ax.axis('off')
+=======
+        sound_temps = data["temperature"].interp(lat=soundlat, lon=soundlon) - 273.15
+        sound_rh = data["rh"].interp(lat=soundlat, lon=soundlon)
+        sound_dp = mpcalc.dewpoint_from_relative_humidity(
+            sound_temps.data * units.degC, sound_rh.data * units.percent
+        )
+        skew = SkewT(fig=fig, rect=(0.75 - (0.15 * i), 0.3, 0.15, 0.1))
+        skew.plot(sound_pres, sound_dp, "g", linewidth=3)
+        skew.plot(sound_pres, sound_temps, "r", linewidth=3)
+        skew.ax.axvline(0, color="purple", linestyle="--", linewidth=3)
+        skew.ax.set_ylim((1000, ptop))
+        skew.ax.axis("off")
+>>>>>>> upstream/main
 
     for i in range(0, 5):
         soundlat = 34.75
         soundlon = 360 - (startlat + (londelt * i))
+<<<<<<< HEAD
         sound_temps = data['temperature'].interp(lat=soundlat, lon=soundlon) - 273.15
         sound_rh = data['rh'].interp(lat=soundlat, lon=soundlon)
         sound_dp = mpcalc.dewpoint_from_relative_humidity(sound_temps.data * units.degC, sound_rh.data * units.percent)
@@ -302,10 +570,24 @@ for i in range(0, 121, 24):
         skew.ax.axvline(0, color='purple', linestyle='--', linewidth=3)
         skew.ax.set_ylim((1000, ptop))
         skew.ax.axis('off')
+=======
+        sound_temps = data["temperature"].interp(lat=soundlat, lon=soundlon) - 273.15
+        sound_rh = data["rh"].interp(lat=soundlat, lon=soundlon)
+        sound_dp = mpcalc.dewpoint_from_relative_humidity(
+            sound_temps.data * units.degC, sound_rh.data * units.percent
+        )
+        skew = SkewT(fig=fig, rect=(0.75 - (0.15 * i), 0.4, 0.15, 0.1))
+        skew.plot(sound_pres, sound_dp, "g", linewidth=3)
+        skew.plot(sound_pres, sound_temps, "r", linewidth=3)
+        skew.ax.axvline(0, color="purple", linestyle="--", linewidth=3)
+        skew.ax.set_ylim((1000, ptop))
+        skew.ax.axis("off")
+>>>>>>> upstream/main
 
     for i in range(0, 5):
         soundlat = 38.75
         soundlon = 360 - (startlat + (londelt * i))
+<<<<<<< HEAD
         sound_temps = data['temperature'].interp(lat=soundlat, lon=soundlon) - 273.15
         sound_rh = data['rh'].interp(lat=soundlat, lon=soundlon)
         sound_dp = mpcalc.dewpoint_from_relative_humidity(sound_temps.data * units.degC, sound_rh.data * units.percent)
@@ -315,10 +597,24 @@ for i in range(0, 121, 24):
         skew.ax.axvline(0, color='purple', linestyle='--', linewidth=3)
         skew.ax.set_ylim((1000, ptop))
         skew.ax.axis('off')
+=======
+        sound_temps = data["temperature"].interp(lat=soundlat, lon=soundlon) - 273.15
+        sound_rh = data["rh"].interp(lat=soundlat, lon=soundlon)
+        sound_dp = mpcalc.dewpoint_from_relative_humidity(
+            sound_temps.data * units.degC, sound_rh.data * units.percent
+        )
+        skew = SkewT(fig=fig, rect=(0.75 - (0.15 * i), 0.5, 0.15, 0.1))
+        skew.plot(sound_pres, sound_dp, "g", linewidth=3)
+        skew.plot(sound_pres, sound_temps, "r", linewidth=3)
+        skew.ax.axvline(0, color="purple", linestyle="--", linewidth=3)
+        skew.ax.set_ylim((1000, ptop))
+        skew.ax.axis("off")
+>>>>>>> upstream/main
 
     for i in range(0, 5):
         soundlat = 42.65
         soundlon = 360 - (startlat + (londelt * i))
+<<<<<<< HEAD
         sound_temps = data['temperature'].interp(lat=soundlat, lon=soundlon) - 273.15
         sound_rh = data['rh'].interp(lat=soundlat, lon=soundlon)
         sound_dp = mpcalc.dewpoint_from_relative_humidity(sound_temps.data * units.degC, sound_rh.data * units.percent)
@@ -328,10 +624,24 @@ for i in range(0, 121, 24):
         skew.ax.axvline(0, color='purple', linestyle='--', linewidth=3)
         skew.ax.set_ylim((1000, ptop))
         skew.ax.axis('off')
+=======
+        sound_temps = data["temperature"].interp(lat=soundlat, lon=soundlon) - 273.15
+        sound_rh = data["rh"].interp(lat=soundlat, lon=soundlon)
+        sound_dp = mpcalc.dewpoint_from_relative_humidity(
+            sound_temps.data * units.degC, sound_rh.data * units.percent
+        )
+        skew = SkewT(fig=fig, rect=(0.75 - (0.15 * i), 0.6, 0.15, 0.1))
+        skew.plot(sound_pres, sound_dp, "g", linewidth=3)
+        skew.plot(sound_pres, sound_temps, "r", linewidth=3)
+        skew.ax.axvline(0, color="purple", linestyle="--", linewidth=3)
+        skew.ax.set_ylim((1000, ptop))
+        skew.ax.axis("off")
+>>>>>>> upstream/main
 
     for i in range(0, 5):
         soundlat = 46.35
         soundlon = 360 - (startlat + (londelt * i))
+<<<<<<< HEAD
         sound_temps = data['temperature'].interp(lat=soundlat, lon=soundlon) - 273.15
         sound_rh = data['rh'].interp(lat=soundlat, lon=soundlon)
         sound_dp = mpcalc.dewpoint_from_relative_humidity(sound_temps.data * units.degC, sound_rh.data * units.percent)
@@ -354,5 +664,45 @@ for i in range(0, 121, 24):
 
     # Save the plot
     plt.savefig(output_dir + '/GFS/gfs_hrly_ptypesound_' + dtfs + '.png', bbox_inches='tight', pad_inches=0.1)
+=======
+        sound_temps = data["temperature"].interp(lat=soundlat, lon=soundlon) - 273.15
+        sound_rh = data["rh"].interp(lat=soundlat, lon=soundlon)
+        sound_dp = mpcalc.dewpoint_from_relative_humidity(
+            sound_temps.data * units.degC, sound_rh.data * units.percent
+        )
+        skew = SkewT(fig=fig, rect=(0.75 - (0.15 * i), 0.7, 0.15, 0.1))
+        skew.plot(sound_pres, sound_dp, "g", linewidth=3)
+        skew.plot(sound_pres, sound_temps, "r", linewidth=3)
+        skew.ax.axvline(0, color="purple", linestyle="--", linewidth=3)
+        skew.ax.axis("off")
+        skew.ax.set_ylim((1000, ptop))
+
+    ########## LEGEND ############
+    dashed_red_line = lines.Line2D(
+        [], [], linestyle="solid", color="r", label="Temperature"
+    )
+    dashed_purple_line = lines.Line2D(
+        [], [], linestyle="dashed", color="purple", label="0C Isotherm"
+    )
+    dashed_green_line = lines.Line2D(
+        [], [], linestyle="solid", color="g", label="Dew Point"
+    )
+    grey_line = lines.Line2D([], [], color="darkgray", label="MSLP (hPa)")
+    blue_line = lines.Line2D([], [], color="b", label="2m 0C Isotherm")
+    leg = ax1.legend(
+        handles=[dashed_red_line, dashed_green_line, dashed_purple_line],
+        title="Sounding Legend",
+        loc=4,
+        framealpha=1,
+    )
+    leg.set_zorder(100)
+
+    ######## Save the plot
+    plt.savefig(
+        output_dir + "/GFS/gfs_hrly_pytpesound_" + dtfs + ".png",
+        bbox_inches="tight",
+        pad_inches=0.1,
+    )
+>>>>>>> upstream/main
     plt.close()
     plt.clf()
